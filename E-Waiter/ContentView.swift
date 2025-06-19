@@ -11,7 +11,7 @@ import FirebaseAuth
 
 struct ContentView: View {
     var body: some View {
-        LogIn()
+        MainView()
     }
 }
 
