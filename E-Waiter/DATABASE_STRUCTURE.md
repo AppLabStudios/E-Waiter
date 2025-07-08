@@ -28,31 +28,90 @@ E-Waiter is a restaurant management system that supports multiple device types (
 }
 ```
 
-### 2. Sessions Subcollection
-**Path:** `Restaurants/{restaurantId}/Sessions/{sessionId}`
+### 2. Devices Subcollection
+**Path:** `Restaurants/{restaurantId}/Devices/{deviceId}`
 
-**Purpose:** Tracks all active device logins for a specific restaurant.
+**Purpose:** Manages device authentication and role assignment for a specific restaurant.
 
 **Fields:**
-- `userId` (string) - Firebase Auth user ID
 - `deviceId` (string) - Unique device identifier (UIDevice.identifierForVendor)
-- `userType` (string) - "Owner", "Staff", or "Table"
-- `tableNumber` (number) - Table number (0 for Owner/Staff, 1+ for Tables)
-- `isActive` (boolean) - Session active status
-- `loginTime` (timestamp) - When the session started
-- `lastActivity` (timestamp) - Last activity timestamp
-- `logoutTime` (timestamp) - When the session ended (optional)
+- `deviceRole` (string) - "owner", "staff", or "table"
+- `activated` (boolean) - Whether the device is activated by the owner
+- `tableNumber` (string) - Table number (empty for owner/staff, number for tables)
+- `lastLogin` (timestamp) - Last login timestamp
+- `createdAt` (timestamp) - When the device was first registered
 
 **Example:**
 ```json
 {
-  "userId": "firebase_auth_user_id",
   "deviceId": "device_uuid_here",
-  "userType": "Table",
-  "tableNumber": 3,
+  "deviceRole": "table",
+  "activated": true,
+  "tableNumber": "3",
+  "lastLogin": "2024-01-15T14:30:00Z",
+  "createdAt": "2024-01-15T10:00:00Z"
+}
+```
+
+### 3. MenuCategories Subcollection
+**Path:** `Restaurants/{restaurantId}/MenuCategories/{categoryId}`
+
+**Purpose:** Stores menu categories for organizing dishes.
+
+**Fields:**
+- `id` (string) - Unique category identifier
+- `name` (string) - Category name (e.g., "Main Course", "Desserts", "Drinks")
+- `description` (string) - Optional category description
+- `order` (number) - Display order for sorting
+- `isActive` (boolean) - Whether the category is visible to customers
+- `createdAt` (timestamp) - When the category was created
+
+**Example:**
+```json
+{
+  "id": "category_uuid_here",
+  "name": "Main Course",
+  "description": "Our signature main dishes",
+  "order": 1,
   "isActive": true,
-  "loginTime": "2024-01-15T14:30:00Z",
-  "lastActivity": "2024-01-15T16:45:00Z"
+  "createdAt": "2024-01-15T10:00:00Z"
+}
+```
+
+### 4. MenuDishes Subcollection
+**Path:** `Restaurants/{restaurantId}/MenuDishes/{dishId}`
+
+**Purpose:** Stores individual menu items/dishes.
+
+**Fields:**
+- `id` (string) - Unique dish identifier
+- `name` (string) - Dish name
+- `description` (string) - Dish description and ingredients
+- `price` (number) - Dish price in currency units
+- `categoryId` (string) - Reference to the category this dish belongs to
+- `categoryName` (string) - Category name for easy querying
+- `imageURL` (string) - Optional image URL for the dish
+- `isAvailable` (boolean) - Whether the dish is available for ordering
+- `allergens` (array) - List of allergens (e.g., ["Gluten", "Dairy"])
+- `preparationTime` (number) - Preparation time in minutes
+- `createdAt` (timestamp) - When the dish was created
+- `updatedAt` (timestamp) - When the dish was last updated
+
+**Example:**
+```json
+{
+  "id": "dish_uuid_here",
+  "name": "Pasta Carbonara",
+  "description": "Classic Italian pasta with eggs, cheese, and pancetta",
+  "price": 18.99,
+  "categoryId": "category_uuid_here",
+  "categoryName": "Main Course",
+  "imageURL": "https://example.com/carbonara.jpg",
+  "isAvailable": true,
+  "allergens": ["Gluten", "Dairy", "Eggs"],
+  "preparationTime": 20,
+  "createdAt": "2024-01-15T10:00:00Z",
+  "updatedAt": "2024-01-15T10:00:00Z"
 }
 ```
 
@@ -65,18 +124,30 @@ Restaurants/
 │   ├── city: "New York"
 │   ├── restaurantName: "Sample Restaurant"
 │   ├── userId: "owner_user_id"
-│   └── Sessions/
-│       ├── session_1 (Owner device)
-│       ├── session_2 (Staff device)
-│       ├── session_3 (Table 1)
-│       └── session_4 (Table 2)
+│   ├── Devices/
+│   │   ├── device_1 (Owner device)
+│   │   ├── device_2 (Staff device)
+│   │   ├── device_3 (Table 1)
+│   │   └── device_4 (Table 2)
+│   ├── MenuCategories/
+│   │   ├── category_1 (Main Course)
+│   │   ├── category_2 (Desserts)
+│   │   └── category_3 (Drinks)
+│   └── MenuDishes/
+│       ├── dish_1 (Pasta Carbonara)
+│       ├── dish_2 (Tiramisu)
+│       └── dish_3 (Espresso)
 └── restaurant_2/
     ├── city: "Los Angeles"
     ├── restaurantName: "Another Restaurant"
     ├── userId: "another_owner_id"
-    └── Sessions/
-        ├── session_5 (Owner device)
-        └── session_6 (Table 1)
+    ├── Devices/
+    │   ├── device_5 (Owner device)
+    │   └── device_6 (Table 1)
+    ├── MenuCategories/
+    │   └── category_4 (Main Course)
+    └── MenuDishes/
+        └── dish_4 (Burger)
 ```
 
 ### Advantages
@@ -169,8 +240,12 @@ Return to Login Screen
 
 ## Future Enhancements
 
+### Implemented Collections
+- `Restaurants/{restaurantId}/Devices` - Device management and authentication
+- `Restaurants/{restaurantId}/MenuCategories` - Menu category management
+- `Restaurants/{restaurantId}/MenuDishes` - Menu dish management
+
 ### Planned Collections
-- `Restaurants/{restaurantId}/Menu` - Restaurant menu items
 - `Restaurants/{restaurantId}/Orders` - Customer orders
 - `Restaurants/{restaurantId}/Payments` - Payment transactions
 - `Restaurants/{restaurantId}/Analytics` - Restaurant performance data

@@ -103,6 +103,10 @@ class AuthManager: ObservableObject {
                                 
                                 print("✅ Device activated, role: \(deviceInfo.deviceRole)")
                                 
+                                // Store restaurant ID in UserDefaults for easy access
+                                UserDefaults.standard.set(restaurantId, forKey: "currentRestaurantId")
+                                print("💾 Stored restaurant ID in UserDefaults: \(restaurantId)")
+                                
                                 // Update last login time
                                 self.deviceManager.updateLastLogin(restaurantId: restaurantId) { _ in }
                                 
@@ -202,6 +206,10 @@ class AuthManager: ObservableObject {
             deviceInfo = nil
             isAuthenticated = false
             errorMessage = ""
+            
+            // Clear stored restaurant ID
+            UserDefaults.standard.removeObject(forKey: "currentRestaurantId")
+            print("🗑️ Cleared restaurant ID from UserDefaults")
         } catch {
             errorMessage = "Error signing out: \(error.localizedDescription)"
         }
