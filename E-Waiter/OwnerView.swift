@@ -6,6 +6,7 @@ struct OwnerView: View {
     @State private var selectedTab = 0
     @State private var animateCards = false
     @State private var showWelcomeAnimation = false
+    @State private var showMenuManagement = false
     
     var body: some View {
         GeometryReader { geometry in
@@ -45,6 +46,9 @@ struct OwnerView: View {
             }
         } message: {
             Text("Are you sure you want to logout?")
+        }
+        .sheet(isPresented: $showMenuManagement) {
+            MenuManagementView()
         }
     }
     
@@ -165,7 +169,10 @@ struct OwnerView: View {
                         title: quickActionTitles[index],
                         subtitle: quickActionSubtitles[index],
                         icon: quickActionIcons[index],
-                        color: quickActionColors[index]
+                        color: quickActionColors[index],
+                        action: {
+                            handleQuickAction(index: index)
+                        }
                     )
                     .offset(y: animateCards ? 0 : 50)
                     .opacity(animateCards ? 1 : 0)
@@ -241,13 +248,24 @@ struct OwnerView: View {
         }
     }
     
+    // MARK: - Helper Functions
+    private func handleQuickAction(index: Int) {
+        switch index {
+        case 2: // Menu Management
+            showMenuManagement = true
+        default:
+            // Handle other actions
+            break
+        }
+    }
+    
     // MARK: - Data Arrays
     private let tabIcons = ["house.fill", "person.2.fill", "table.furniture", "chart.bar.fill"]
     private let tabTitles = ["Overview", "Staff", "Tables", "Analytics"]
     
-    private let quickActionTitles = ["New Order", "Add Staff", "Menu Update", "View Reports", "Settings", "Notifications"]
-    private let quickActionSubtitles = ["Create order", "Hire new staff", "Update menu", "View analytics", "Configure", "Check alerts"]
-    private let quickActionIcons = ["plus.circle", "person.badge.plus", "doc.text", "chart.bar", "gear", "bell"]
+    private let quickActionTitles = ["New Order", "Add Staff", "Menu Management", "View Reports", "Settings", "Notifications"]
+    private let quickActionSubtitles = ["Create order", "Hire new staff", "Manage menu", "View analytics", "Configure", "Check alerts"]
+    private let quickActionIcons = ["plus.circle", "person.badge.plus", "fork.knife", "chart.bar", "gear", "bell"]
     private let quickActionColors: [Color] = [.blue, .green, .orange, .purple, .gray, .red]
     
     private let staffTitles = ["Add Staff", "Schedule", "Performance", "Payroll"]
@@ -304,6 +322,7 @@ struct QuickActionCard: View {
     let subtitle: String
     let icon: String
     let color: Color
+    let action: () -> Void
     
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -342,7 +361,7 @@ struct QuickActionCard: View {
         .scaleEffect(1.0)
         .onTapGesture {
             withAnimation(.easeInOut(duration: 0.2)) {
-                // Handle tap
+                action()
             }
         }
     }
