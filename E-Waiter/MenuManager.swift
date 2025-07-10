@@ -1,6 +1,7 @@
 import Foundation
 import FirebaseFirestore
 import FirebaseAuth
+import FirebaseStorage
 
 // MARK: - Menu Models
 struct MenuCategory: Identifiable, Codable {
@@ -94,6 +95,8 @@ class MenuManager: ObservableObject {
                         completion(false)
                     } else {
                         self?.categories.append(category)
+                        // Refresh data to ensure consistency
+                        self?.loadMenuData { _ in }
                         completion(true)
                     }
                 }
@@ -124,12 +127,14 @@ class MenuManager: ObservableObject {
                     if let error = error {
                         self?.errorMessage = "Failed to update category: \(error.localizedDescription)"
                         completion(false)
-                    } else {
-                        if let index = self?.categories.firstIndex(where: { $0.id == category.id }) {
-                            self?.categories[index] = category
+                                            } else {
+                            if let index = self?.categories.firstIndex(where: { $0.id == category.id }) {
+                                self?.categories[index] = category
+                            }
+                            // Refresh data to ensure consistency
+                            self?.loadMenuData { _ in }
+                            completion(true)
                         }
-                        completion(true)
-                    }
                 }
             }
     }
@@ -143,7 +148,7 @@ class MenuManager: ObservableObject {
         
         isLoading = true
         
-        // First, check if there are dishes in this category
+        // First, get all dishes in this category
         db.collection("Restaurants").document(restaurantId)
             .collection("MenuDishes")
             .whereField("categoryId", isEqualTo: category.id)
@@ -157,31 +162,101 @@ class MenuManager: ObservableObject {
                     return
                 }
                 
-                if let snapshot = snapshot, !snapshot.documents.isEmpty {
-                    DispatchQueue.main.async {
-                        self?.isLoading = false
-                        self?.errorMessage = "Cannot delete category with existing dishes. Please move or delete the dishes first."
-                        completion(false)
-                    }
-                    return
-                }
+                let dishesToDelete = snapshot?.documents ?? []
                 
-                // No dishes found, proceed with deletion
-                self?.db.collection("Restaurants").document(restaurantId)
-                    .collection("MenuCategories").document(category.id)
-                    .delete { [weak self] error in
-                        DispatchQueue.main.async {
-                            self?.isLoading = false
-                            if let error = error {
-                                self?.errorMessage = "Failed to delete category: \(error.localizedDescription)"
-                                completion(false)
-                            } else {
+                // Delete all dishes and their images
+                self?.deleteDishesAndImages(dishes: dishesToDelete) { [weak self] success in
+                    if success {
+                        // Now delete the category
+                        self?.db.collection("Restaurants").document(restaurantId)
+                            .collection("MenuCategories").document(category.id)
+                            .delete { [weak self] error in
+                                DispatchQueue.main.async {
+                                    self?.isLoading = false
+                                    if let error = error {
+                                        self?.errorMessage = "Failed to delete category: \(error.localizedDescription)"
+                                        completion(false)
+                                                                } else {
                                 self?.categories.removeAll { $0.id == category.id }
+                                // Refresh data to ensure consistency
+                                self?.loadMenuData { _ in }
                                 completion(true)
                             }
+                                }
+                            }
+                    } else {
+                        DispatchQueue.main.async {
+                            self?.isLoading = false
+                            completion(false)
                         }
                     }
+                }
             }
+    }
+    
+    private func deleteDishesAndImages(dishes: [QueryDocumentSnapshot], completion: @escaping (Bool) -> Void) {
+        guard !dishes.isEmpty else {
+            completion(true)
+            return
+        }
+        
+        let group = DispatchGroup()
+        var hasError = false
+        
+        for dish in dishes {
+            group.enter()
+            
+            let dishData = dish.data()
+            let imageURL = dishData["imageURL"] as? String
+            
+            // Delete the dish document
+            dish.reference.delete { [weak self] error in
+                if let error = error {
+                    DispatchQueue.main.async {
+                        self?.errorMessage = "Failed to delete dish: \(error.localizedDescription)"
+                        hasError = true
+                    }
+                }
+                
+                // If there's an image, delete it from storage
+                if let imageURL = imageURL, !imageURL.isEmpty {
+                    self?.deleteImageFromStorage(imageURL: imageURL) { success in
+                        if !success {
+                            DispatchQueue.main.async {
+                                self?.errorMessage = "Failed to delete dish image"
+                                hasError = true
+                            }
+                        }
+                        group.leave()
+                    }
+                } else {
+                    group.leave()
+                }
+            }
+        }
+        
+        group.notify(queue: .main) {
+            completion(!hasError)
+        }
+    }
+    
+    private func deleteImageFromStorage(imageURL: String, completion: @escaping (Bool) -> Void) {
+        guard let url = URL(string: imageURL) else {
+            completion(false)
+            return
+        }
+        
+        let storage = Storage.storage()
+        let storageRef = storage.reference(forURL: url.absoluteString)
+        
+        storageRef.delete { error in
+            if let error = error {
+                print("Error deleting image from storage: \(error.localizedDescription)")
+                completion(false)
+            } else {
+                completion(true)
+            }
+        }
     }
     
     // MARK: - Dish Management
@@ -219,6 +294,8 @@ class MenuManager: ObservableObject {
                         completion(false)
                     } else {
                         self?.dishes.append(dish)
+                        // Refresh data to ensure consistency
+                        self?.loadMenuData { _ in }
                         completion(true)
                     }
                 }
@@ -254,12 +331,14 @@ class MenuManager: ObservableObject {
                     if let error = error {
                         self?.errorMessage = "Failed to update dish: \(error.localizedDescription)"
                         completion(false)
-                    } else {
-                        if let index = self?.dishes.firstIndex(where: { $0.id == dish.id }) {
-                            self?.dishes[index] = dish
+                                            } else {
+                            if let index = self?.dishes.firstIndex(where: { $0.id == dish.id }) {
+                                self?.dishes[index] = dish
+                            }
+                            // Refresh data to ensure consistency
+                            self?.loadMenuData { _ in }
+                            completion(true)
                         }
-                        completion(true)
-                    }
                 }
             }
     }
@@ -273,16 +352,41 @@ class MenuManager: ObservableObject {
         
         isLoading = true
         
+        // Delete the dish document
         db.collection("Restaurants").document(restaurantId)
             .collection("MenuDishes").document(dish.id)
             .delete { [weak self] error in
-                DispatchQueue.main.async {
-                    self?.isLoading = false
-                    if let error = error {
+                if let error = error {
+                    DispatchQueue.main.async {
+                        self?.isLoading = false
                         self?.errorMessage = "Failed to delete dish: \(error.localizedDescription)"
                         completion(false)
-                    } else {
+                    }
+                    return
+                }
+                
+                // If there's an image, delete it from storage
+                if let imageURL = dish.imageURL, !imageURL.isEmpty {
+                    self?.deleteImageFromStorage(imageURL: imageURL) { success in
+                        DispatchQueue.main.async {
+                            self?.isLoading = false
+                            if success {
+                                self?.dishes.removeAll { $0.id == dish.id }
+                                // Refresh data to ensure consistency
+                                self?.loadMenuData { _ in }
+                                completion(true)
+                            } else {
+                                self?.errorMessage = "Failed to delete dish image"
+                                completion(false)
+                            }
+                        }
+                    }
+                } else {
+                    DispatchQueue.main.async {
+                        self?.isLoading = false
                         self?.dishes.removeAll { $0.id == dish.id }
+                        // Refresh data to ensure consistency
+                        self?.loadMenuData { _ in }
                         completion(true)
                     }
                 }
@@ -380,6 +484,11 @@ class MenuManager: ObservableObject {
         return categories.first { $0.id == categoryId }
     }
     
+    func setRestaurantId(_ restaurantId: String) {
+        currentRestaurantId = restaurantId
+        UserDefaults.standard.set(restaurantId, forKey: "currentRestaurantId")
+    }
+    
     private func getCurrentRestaurantId() -> String? {
         // First check if we have it stored in this session
         if let sessionRestaurantId = currentRestaurantId {
@@ -418,9 +527,5 @@ class MenuManager: ObservableObject {
         return restaurantId
     }
     
-    // Method to manually set restaurant ID (for testing or fallback)
-    func setRestaurantId(_ restaurantId: String) {
-        currentRestaurantId = restaurantId
-        print("🔧 MenuManager: Manually set restaurant ID: \(restaurantId)")
-    }
+
 } 

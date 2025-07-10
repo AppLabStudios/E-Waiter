@@ -5,6 +5,11 @@ struct MenuManagementView: View {
     @State private var selectedTab = 0
     @State private var showAddCategory = false
     @State private var showAddDish = false
+    @State private var showEditCategory = false
+    @State private var showEditDish = false
+    @State private var selectedCategory: MenuCategory?
+    @State private var selectedDish: MenuDish?
+    @State private var editSheetId = UUID()
     @State private var animateCards = false
     @State private var showWelcomeAnimation = false
     
@@ -50,6 +55,24 @@ struct MenuManagementView: View {
         }
         .sheet(isPresented: $showAddDish) {
             AddDishView(menuManager: menuManager)
+        }
+        .sheet(isPresented: $showEditCategory) {
+            if let category = selectedCategory {
+                EditCategoryView(menuManager: menuManager, category: category)
+                    .onDisappear {
+                        selectedCategory = nil
+                    }
+                    .id(editSheetId)
+            }
+        }
+        .sheet(isPresented: $showEditDish) {
+            if let dish = selectedDish {
+                EditDishView(menuManager: menuManager, dish: dish)
+                    .onDisappear {
+                        selectedDish = nil
+                    }
+                    .id(editSheetId)
+            }
         }
         .alert("Error", isPresented: .constant(!menuManager.errorMessage.isEmpty)) {
             Button("OK") {
@@ -320,7 +343,9 @@ struct MenuManagementView: View {
                     category: category,
                     dishCount: menuManager.getDishesForCategory(category.id).count,
                     onEdit: {
-                        // Handle edit
+                        selectedCategory = category
+                        editSheetId = UUID()
+                        showEditCategory = true
                     },
                     onDelete: {
                         deleteCategory(category)
@@ -339,7 +364,9 @@ struct MenuManagementView: View {
                 DishCard(
                     dish: dish,
                     onEdit: {
-                        // Handle edit
+                        selectedDish = dish
+                        editSheetId = UUID()
+                        showEditDish = true
                     },
                     onDelete: {
                         deleteDish(dish)
@@ -365,6 +392,10 @@ struct MenuManagementView: View {
         menuManager.deleteCategory(category) { success in
             if success {
                 print("Category deleted successfully")
+                // Refresh the menu data to update the view
+                DispatchQueue.main.async {
+                    self.loadMenuData()
+                }
             }
         }
     }
@@ -373,6 +404,10 @@ struct MenuManagementView: View {
         menuManager.deleteDish(dish) { success in
             if success {
                 print("Dish deleted successfully")
+                // Refresh the menu data to update the view
+                DispatchQueue.main.async {
+                    self.loadMenuData()
+                }
             }
         }
     }
