@@ -8,6 +8,10 @@ struct TableView: View {
     @State private var showWelcomeAnimation = false
     @State private var cartItems: [CartItem] = []
     @State private var showCart = false
+    @StateObject private var menuManager = MenuManager()
+    @State private var isLoading = false
+    @State private var showDishDetail = false
+    @State private var selectedDish: MenuDish?
     
     var body: some View {
         GeometryReader { geometry in
@@ -35,9 +39,21 @@ struct TableView: View {
                 if showCart {
                     cartOverlay
                 }
+                
+                // Dish detail overlay
+                if showDishDetail, let dish = selectedDish {
+                    dishDetailOverlay(dish: dish)
+                }
             }
         }
         .onAppear {
+            // Initialize restaurant ID if needed
+            if let storedRestaurantId = UserDefaults.standard.string(forKey: "currentRestaurantId") {
+                menuManager.setRestaurantId(storedRestaurantId)
+            }
+            
+            loadMenuData()
+            
             withAnimation(.easeOut(duration: 0.8)) {
                 showWelcomeAnimation = true
             }
@@ -52,6 +68,13 @@ struct TableView: View {
             }
         } message: {
             Text("Are you sure you want to logout?")
+        }
+        .alert("Error", isPresented: .constant(!menuManager.errorMessage.isEmpty)) {
+            Button("OK") {
+                menuManager.errorMessage = ""
+            }
+        } message: {
+            Text(menuManager.errorMessage)
         }
     }
     
@@ -137,18 +160,18 @@ struct TableView: View {
     private var categoryTabsView: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 20) {
-                ForEach(0..<categories.count, id: \.self) { index in
+                ForEach(Array(menuManager.categories.enumerated()), id: \.element.id) { index, category in
                     Button(action: {
                         withAnimation(.easeInOut(duration: 0.3)) {
                             selectedCategory = index
                         }
                     }) {
                         VStack(spacing: 8) {
-                            Image(systemName: categoryIcons[index])
+                            Image(systemName: "folder.fill")
                                 .font(.system(size: 24, weight: .medium))
                                 .foregroundColor(selectedCategory == index ? .white : .white.opacity(0.6))
                             
-                            Text(categories[index])
+                            Text(category.name)
                                 .font(.system(size: 14, weight: .medium))
                                 .foregroundColor(selectedCategory == index ? .white : .white.opacity(0.6))
                         }
@@ -174,18 +197,33 @@ struct TableView: View {
     private func mainContentView(geometry: GeometryProxy) -> some View {
         ScrollView {
             VStack(spacing: 30) {
-                // Menu items grid
-                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 20), count: 2), spacing: 20) {
-                    ForEach(menuItems[selectedCategory], id: \.id) { item in
-                        MenuItemCard(
-                            item: item,
-                            onAddToCart: {
-                                addToCart(item)
+                if isLoading {
+                    loadingView
+                } else if menuManager.categories.isEmpty {
+                    emptyMenuView
+                } else {
+                    // Menu items grid
+                    let dishesForCategory = getDishesForSelectedCategory()
+                    if dishesForCategory.isEmpty {
+                        emptyCategoryView
+                    } else {
+                        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 20), count: 2), spacing: 20) {
+                            ForEach(dishesForCategory, id: \.id) { dish in
+                                MenuItemCard(
+                                    item: convertDishToMenuItem(dish),
+                                    onAddToCart: {
+                                        addToCart(convertDishToMenuItem(dish))
+                                    },
+                                    onTap: {
+                                        selectedDish = dish
+                                        showDishDetail = true
+                                    }
+                                )
+                                .offset(y: animateCards ? 0 : 50)
+                                .opacity(animateCards ? 1 : 0)
+                                .animation(.easeOut(duration: 0.6).delay(Double(dishesForCategory.firstIndex(where: { $0.id == dish.id }) ?? 0) * 0.1), value: animateCards)
                             }
-                        )
-                        .offset(y: animateCards ? 0 : 50)
-                        .opacity(animateCards ? 1 : 0)
-                        .animation(.easeOut(duration: 0.6).delay(Double(menuItems[selectedCategory].firstIndex(where: { $0.id == item.id }) ?? 0) * 0.1), value: animateCards)
+                        }
                     }
                 }
             }
@@ -196,6 +234,201 @@ struct TableView: View {
     }
     
     // MARK: - Cart Overlay
+    private func dishDetailOverlay(dish: MenuDish) -> some View {
+        ZStack {
+            // Background blur
+            Color.black.opacity(0.7)
+                .ignoresSafeArea()
+                .onTapGesture {
+                    withAnimation(.easeInOut(duration: 0.3)) {
+                        showDishDetail = false
+                        selectedDish = nil
+                    }
+                }
+            
+            // Dish detail content
+            VStack(spacing: 0) {
+                // Header with close button
+                HStack {
+                    Button("Close") {
+                        withAnimation(.easeInOut(duration: 0.3)) {
+                            showDishDetail = false
+                            selectedDish = nil
+                        }
+                    }
+                    .font(.system(size: 16, weight: .medium))
+                    .foregroundColor(.white.opacity(0.8))
+                    
+                    Spacer()
+                    
+                    Text("Dish Details")
+                        .font(.system(size: 20, weight: .bold))
+                        .foregroundColor(.white)
+                    
+                    Spacer()
+                    
+                    Button("Add to Cart") {
+                        addToCart(convertDishToMenuItem(dish))
+                        withAnimation(.easeInOut(duration: 0.3)) {
+                            showDishDetail = false
+                            selectedDish = nil
+                        }
+                    }
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundColor(.green)
+                }
+                .padding(24)
+                .background(Color.white.opacity(0.1))
+                
+                // Dish content
+                ScrollView {
+                    VStack(spacing: 24) {
+                        // Dish image
+                        if let imageURL = dish.imageURL, !imageURL.isEmpty {
+                            AsyncImage(url: URL(string: imageURL)) { image in
+                                image
+                                    .resizable()
+                                    .aspectRatio(contentMode: .fill)
+                                    .frame(height: 250)
+                                    .clipped()
+                                    .cornerRadius(16)
+                            } placeholder: {
+                                RoundedRectangle(cornerRadius: 16)
+                                    .fill(Color.white.opacity(0.1))
+                                    .frame(height: 250)
+                                    .overlay(
+                                        ProgressView()
+                                            .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                                    )
+                            }
+                        } else {
+                            RoundedRectangle(cornerRadius: 16)
+                                .fill(Color.white.opacity(0.1))
+                                .frame(height: 250)
+                                .overlay(
+                                    VStack(spacing: 12) {
+                                        Image(systemName: "fork.knife.circle")
+                                            .font(.system(size: 60))
+                                            .foregroundColor(.white.opacity(0.5))
+                                        Text("No Image Available")
+                                            .font(.system(size: 16, weight: .medium))
+                                            .foregroundColor(.white.opacity(0.5))
+                                    }
+                                )
+                        }
+                        
+                        // Dish information
+                        VStack(spacing: 20) {
+                            // Title and price
+                            HStack {
+                                VStack(alignment: .leading, spacing: 8) {
+                                    Text(dish.name)
+                                        .font(.system(size: 28, weight: .bold))
+                                        .foregroundColor(.white)
+                                    
+                                    Text(dish.categoryName)
+                                        .font(.system(size: 16, weight: .medium))
+                                        .foregroundColor(.white.opacity(0.7))
+                                }
+                                
+                                Spacer()
+                                
+                                Text("$\(String(format: "%.2f", dish.price))")
+                                    .font(.system(size: 24, weight: .bold))
+                                    .foregroundColor(.green)
+                            }
+                            
+                            // Description
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text("Description")
+                                    .font(.system(size: 18, weight: .semibold))
+                                    .foregroundColor(.white)
+                                
+                                Text(dish.description)
+                                    .font(.system(size: 16, weight: .medium))
+                                    .foregroundColor(.white.opacity(0.8))
+                                    .lineLimit(nil)
+                            }
+                            
+                            // Preparation time
+                            HStack {
+                                Image(systemName: "clock")
+                                    .font(.system(size: 16, weight: .medium))
+                                    .foregroundColor(.orange)
+                                
+                                Text("Preparation Time: \(dish.preparationTime) minutes")
+                                    .font(.system(size: 16, weight: .medium))
+                                    .foregroundColor(.white.opacity(0.8))
+                                
+                                Spacer()
+                            }
+                            
+                            // Availability status
+                            HStack {
+                                Image(systemName: dish.isAvailable ? "checkmark.circle.fill" : "xmark.circle.fill")
+                                    .font(.system(size: 16, weight: .medium))
+                                    .foregroundColor(dish.isAvailable ? .green : .red)
+                                
+                                Text(dish.isAvailable ? "Available" : "Currently Unavailable")
+                                    .font(.system(size: 16, weight: .medium))
+                                    .foregroundColor(dish.isAvailable ? .green : .red)
+                                
+                                Spacer()
+                            }
+                            
+                            // Allergens
+                            if !dish.allergens.isEmpty {
+                                VStack(alignment: .leading, spacing: 12) {
+                                    Text("Allergens")
+                                        .font(.system(size: 18, weight: .semibold))
+                                        .foregroundColor(.white)
+                                    
+                                    LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 2), spacing: 8) {
+                                        ForEach(dish.allergens, id: \.self) { allergen in
+                                            HStack {
+                                                Image(systemName: "exclamationmark.triangle.fill")
+                                                    .font(.system(size: 12, weight: .medium))
+                                                    .foregroundColor(.orange)
+                                                
+                                                Text(allergen)
+                                                    .font(.system(size: 14, weight: .medium))
+                                                    .foregroundColor(.white.opacity(0.8))
+                                                
+                                                Spacer()
+                                            }
+                                            .padding(8)
+                                            .background(
+                                                RoundedRectangle(cornerRadius: 8)
+                                                    .fill(Color.orange.opacity(0.1))
+                                                    .overlay(
+                                                        RoundedRectangle(cornerRadius: 8)
+                                                            .stroke(Color.orange.opacity(0.3), lineWidth: 1)
+                                                    )
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        .padding(.horizontal, 24)
+                    }
+                    .padding(.bottom, 24)
+                }
+            }
+            .frame(maxWidth: 500, maxHeight: 600)
+            .background(
+                RoundedRectangle(cornerRadius: 20)
+                    .fill(Color(red: 0.1, green: 0.15, blue: 0.2))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 20)
+                            .stroke(Color.white.opacity(0.1), lineWidth: 1)
+                    )
+            )
+            .offset(y: showDishDetail ? 0 : 1000)
+            .animation(.easeInOut(duration: 0.3), value: showDishDetail)
+        }
+    }
+    
     private var cartOverlay: some View {
         ZStack {
             // Background blur
@@ -309,6 +542,36 @@ struct TableView: View {
     }
     
     // MARK: - Helper Methods
+    private func loadMenuData() {
+        isLoading = true
+        menuManager.loadMenuData { success in
+            DispatchQueue.main.async {
+                self.isLoading = false
+                if success {
+                    print("Menu data loaded successfully")
+                } else {
+                    print("Failed to load menu data")
+                }
+            }
+        }
+    }
+    
+    private func getDishesForSelectedCategory() -> [MenuDish] {
+        guard selectedCategory < menuManager.categories.count else { return [] }
+        let category = menuManager.categories[selectedCategory]
+        return menuManager.getDishesForCategory(category.id)
+    }
+    
+    private func convertDishToMenuItem(_ dish: MenuDish) -> MenuItem {
+        return MenuItem(
+            id: dish.id,
+            name: dish.name,
+            description: dish.description,
+            price: dish.price,
+            image: dish.imageURL ?? "🍽️"
+        )
+    }
+    
     private func addToCart(_ item: MenuItem) {
         if let existingIndex = cartItems.firstIndex(where: { $0.menuItem.id == item.id }) {
             cartItems[existingIndex].quantity += 1
@@ -321,47 +584,57 @@ struct TableView: View {
         cartItems.reduce(0) { $0 + ($1.menuItem.price * Double($1.quantity)) }
     }
     
-    // MARK: - Data Arrays
-    private let categories = ["Appetizers", "Main Courses", "Beverages", "Desserts", "Specials"]
-    private let categoryIcons = ["fork.knife", "leaf.fill", "cup.and.saucer.fill", "birthday.cake.fill", "star.fill"]
+    // MARK: - Loading and Empty States
+    private var loadingView: some View {
+        VStack(spacing: 20) {
+            ProgressView()
+                .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                .scaleEffect(1.5)
+            
+            Text("Loading menu...")
+                .font(.system(size: 18, weight: .medium))
+                .foregroundColor(.white.opacity(0.7))
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
     
-    private let menuItems: [[MenuItem]] = [
-        // Appetizers
-        [
-            MenuItem(id: "app1", name: "Bruschetta", description: "Toasted bread with tomatoes, garlic, and basil", price: 8.99, image: "🍅"),
-            MenuItem(id: "app2", name: "Mozzarella Sticks", description: "Crispy breaded mozzarella with marinara", price: 7.99, image: "🧀"),
-            MenuItem(id: "app3", name: "Garlic Bread", description: "Fresh baked bread with garlic butter", price: 4.99, image: "🍞"),
-            MenuItem(id: "app4", name: "Soup of the Day", description: "Chef's daily special soup", price: 6.99, image: "🥣")
-        ],
-        // Main Courses
-        [
-            MenuItem(id: "main1", name: "Pasta Carbonara", description: "Spaghetti with eggs, cheese, and pancetta", price: 16.99, image: "🍝"),
-            MenuItem(id: "main2", name: "Pizza Margherita", description: "Fresh mozzarella, tomato, and basil", price: 14.99, image: "🍕"),
-            MenuItem(id: "main3", name: "Grilled Salmon", description: "Atlantic salmon with seasonal vegetables", price: 24.99, image: "🐟"),
-            MenuItem(id: "main4", name: "Beef Tenderloin", description: "8oz tenderloin with mashed potatoes", price: 28.99, image: "🥩")
-        ],
-        // Beverages
-        [
-            MenuItem(id: "bev1", name: "Fresh Lemonade", description: "Homemade lemonade with mint", price: 4.99, image: "🍋"),
-            MenuItem(id: "bev2", name: "Iced Tea", description: "House blend iced tea", price: 3.99, image: "🥤"),
-            MenuItem(id: "bev3", name: "Espresso", description: "Single shot of premium espresso", price: 3.50, image: "☕"),
-            MenuItem(id: "bev4", name: "Red Wine", description: "Glass of house red wine", price: 8.99, image: "🍷")
-        ],
-        // Desserts
-        [
-            MenuItem(id: "des1", name: "Tiramisu", description: "Classic Italian coffee-flavored dessert", price: 8.99, image: "🍰"),
-            MenuItem(id: "des2", name: "Chocolate Lava Cake", description: "Warm chocolate cake with vanilla ice cream", price: 9.99, image: "🍫"),
-            MenuItem(id: "des3", name: "Cheesecake", description: "New York style cheesecake", price: 7.99, image: "🧀"),
-            MenuItem(id: "des4", name: "Gelato", description: "Three scoops of Italian gelato", price: 6.99, image: "🍨")
-        ],
-        // Specials
-        [
-            MenuItem(id: "sp1", name: "Chef's Special", description: "Today's chef-recommended dish", price: 22.99, image: "👨‍🍳"),
-            MenuItem(id: "sp2", name: "Wine Pairing", description: "Three-course meal with wine", price: 45.99, image: "🍷"),
-            MenuItem(id: "sp3", name: "Family Platter", description: "Serves 4-6 people", price: 39.99, image: "👨‍👩‍👧‍👦"),
-            MenuItem(id: "sp4", name: "Date Night", description: "Romantic dinner for two", price: 59.99, image: "💕")
-        ]
-    ]
+    private var emptyMenuView: some View {
+        VStack(spacing: 20) {
+            Image(systemName: "fork.knife.circle")
+                .font(.system(size: 60))
+                .foregroundColor(.white.opacity(0.3))
+            
+            Text("No Menu Available")
+                .font(.system(size: 24, weight: .bold))
+                .foregroundColor(.white)
+            
+            Text("The restaurant menu is currently being set up.")
+                .font(.system(size: 16, weight: .medium))
+                .foregroundColor(.white.opacity(0.7))
+                .multilineTextAlignment(.center)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+    
+    private var emptyCategoryView: some View {
+        VStack(spacing: 20) {
+            Image(systemName: "tray")
+                .font(.system(size: 60))
+                .foregroundColor(.white.opacity(0.3))
+            
+            Text("No Dishes in This Category")
+                .font(.system(size: 24, weight: .bold))
+                .foregroundColor(.white)
+            
+            Text("This category is empty. Check back later for new dishes!")
+                .font(.system(size: 16, weight: .medium))
+                .foregroundColor(.white.opacity(0.7))
+                .multilineTextAlignment(.center)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+    
+
 }
 
 // MARK: - Data Models
@@ -383,13 +656,36 @@ struct CartItem: Identifiable {
 struct MenuItemCard: View {
     let item: MenuItem
     let onAddToCart: () -> Void
+    let onTap: () -> Void
     
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             // Item image and price
             HStack {
-                Text(item.image)
-                    .font(.system(size: 40))
+                if item.image.hasPrefix("http") {
+                    // Load image from URL
+                    AsyncImage(url: URL(string: item.image)) { image in
+                        image
+                            .resizable()
+                            .aspectRatio(contentMode: .fill)
+                            .frame(width: 60, height: 60)
+                            .clipped()
+                            .cornerRadius(8)
+                    } placeholder: {
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(Color.white.opacity(0.1))
+                            .frame(width: 60, height: 60)
+                            .overlay(
+                                ProgressView()
+                                    .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                                    .scaleEffect(0.8)
+                            )
+                    }
+                } else {
+                    // Use emoji or default icon
+                    Text(item.image)
+                        .font(.system(size: 40))
+                }
                 
                 Spacer()
                 
@@ -410,22 +706,47 @@ struct MenuItemCard: View {
                     .lineLimit(2)
             }
             
-            // Add to cart button
-            Button(action: onAddToCart) {
-                HStack {
-                    Image(systemName: "plus")
-                        .font(.system(size: 16, weight: .semibold))
-                    
-                    Text("Add to Cart")
-                        .font(.system(size: 16, weight: .semibold))
+            // Action buttons
+            HStack(spacing: 12) {
+                // View details button
+                Button(action: onTap) {
+                    HStack {
+                        Image(systemName: "info.circle")
+                            .font(.system(size: 14, weight: .semibold))
+                        
+                        Text("Details")
+                            .font(.system(size: 14, weight: .semibold))
+                    }
+                    .foregroundColor(.white.opacity(0.8))
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 36)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(Color.white.opacity(0.1))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 8)
+                                    .stroke(Color.white.opacity(0.2), lineWidth: 1)
+                            )
+                    )
                 }
-                .foregroundColor(.white)
-                .frame(maxWidth: .infinity)
-                .frame(height: 44)
-                .background(
-                    RoundedRectangle(cornerRadius: 12)
-                        .fill(Color.green)
-                )
+                
+                // Add to cart button
+                Button(action: onAddToCart) {
+                    HStack {
+                        Image(systemName: "plus")
+                            .font(.system(size: 14, weight: .semibold))
+                        
+                        Text("Add to Cart")
+                            .font(.system(size: 14, weight: .semibold))
+                    }
+                    .foregroundColor(.white)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 36)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(Color.green)
+                    )
+                }
             }
         }
         .padding(20)
@@ -438,6 +759,11 @@ struct MenuItemCard: View {
                         .stroke(Color.white.opacity(0.1), lineWidth: 1)
                 )
         )
+        .onTapGesture {
+            onTap()
+        }
+        .scaleEffect(1.0)
+        .animation(.easeInOut(duration: 0.1), value: true)
     }
 }
 
@@ -448,8 +774,30 @@ struct CartItemRow: View {
     
     var body: some View {
         HStack(spacing: 16) {
-            Text(item.menuItem.image)
-                .font(.system(size: 30))
+            if item.menuItem.image.hasPrefix("http") {
+                // Load image from URL
+                AsyncImage(url: URL(string: item.menuItem.image)) { image in
+                    image
+                        .resizable()
+                        .aspectRatio(contentMode: .fill)
+                        .frame(width: 40, height: 40)
+                        .clipped()
+                        .cornerRadius(6)
+                } placeholder: {
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(Color.white.opacity(0.1))
+                        .frame(width: 40, height: 40)
+                        .overlay(
+                            ProgressView()
+                                .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                                .scaleEffect(0.6)
+                        )
+                }
+            } else {
+                // Use emoji or default icon
+                Text(item.menuItem.image)
+                    .font(.system(size: 30))
+            }
             
             VStack(alignment: .leading, spacing: 4) {
                 Text(item.menuItem.name)
